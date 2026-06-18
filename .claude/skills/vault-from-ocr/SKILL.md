@@ -12,7 +12,7 @@ description: >
 Transform document_parser JSON produced from **typed / printed** documents (GOT-OCR2
 backend) into a well-structured, cross-linked Obsidian vault.
 
-Before anything else, read `skills/shared/vault-conventions.md` (relative to the repo
+Before anything else, read `.claude/skills/shared/vault-conventions.md` (relative to the repo
 root) — it defines the linking hierarchy, note format, MOC structure, and folder layout
 used here. This skill only adds the input-specific cleanup guidance below.
 
