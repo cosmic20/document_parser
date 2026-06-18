@@ -91,7 +91,16 @@ class MarkerEngine(DocumentEngine):
             if tmp_path is not None:
                 os.unlink(tmp_path)
 
-        doc = rendered.model_dump() if hasattr(rendered, "model_dump") else rendered
+        # mode="json" is REQUIRED: marker's JSONOutput.metadata (table_of_contents /
+        # per-page block_metadata, populated once a doc has tables) contains a dict used
+        # as a mapping key, which pydantic's default python-mode model_dump tries to hash
+        # and raises "unhashable type: 'dict'". JSON mode coerces keys to strings and
+        # avoids the hash; our consumers only read JSON-native fields anyway.
+        doc = (
+            rendered.model_dump(mode="json")
+            if hasattr(rendered, "model_dump")
+            else rendered
+        )
         page_nodes = doc.get("children") or []
 
         results: list[PageResult] = []

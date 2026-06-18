@@ -31,7 +31,11 @@ class _FakeRendered:
     def __init__(self, doc: dict):
         self._doc = doc
 
-    def model_dump(self) -> dict:
+    def model_dump(self, **kwargs) -> dict:
+        # Real marker JSONOutput requires mode="json" to serialize (its metadata holds a
+        # dict used as a mapping key, which python-mode hashing rejects). Assert the
+        # adapter passes it so this stays a regression guard.
+        assert kwargs.get("mode") == "json"
         return self._doc
 
 
