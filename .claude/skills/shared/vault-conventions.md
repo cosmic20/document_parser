@@ -1,214 +1,168 @@
-This file holds the shared conventions read by all `vault-from-*` skills. It defines the source-agnostic guidance for turning document_parser JSON into a well-structured Obsidian vault: the linking hierarchy, note format, MOC structure, workflow, and folder layout. The individual `vault-from-*` skills carry only their own OCR/cleanup specifics and defer to this document for everything else.
+This file holds the shared conventions read by all `vault-*` skills. It defines the
+source-agnostic model for turning document_parser JSON into a single, long-lived, concept-first
+Obsidian knowledge vault: the concept model, folder layout, note format, linking rules, the
+concept index, merge-on-growth behavior, and the integration workflow. The individual
+`vault-from-*` skills carry only their own OCR/cleanup specifics and defer to this document for
+everything else. The `vault-build` skill orchestrates them across a whole batch.
 
-# Vault Conventions
+# Vault Conventions (concept-first)
 
-Build and maintain an Obsidian vault from document_parser JSON output. New content is
-split into topic-focused notes, cleaned up, and cross-linked to existing vault knowledge.
+## Core model
 
-## Linking Philosophy
+The vault is **one growing knowledge graph that spans every course**. The unit of knowledge is the
+**concept**, not the lecture or the course:
 
-The vault follows a **directed knowledge hierarchy** to keep links tractable:
+- **Concepts are notes.** Each distinct idea is exactly **one canonical note** with a globally
+  unique title (e.g. `Random Variables.md`). The same concept seen in several courses is **one
+  note**, not one-per-course.
+- **Topics (broad subjects) are folders.** Notes live in a subject-area folder, one level deep:
+  `Probability/`, `Linear Algebra/`, `Real Analysis/`, `Optimization/`, `Statistics/`,
+  `Machine Learning/`, `Computer Vision/`, `Algorithms/`, `Information Theory/`, …
+- **Courses are references (provenance), not structure.** A course/lecture is recorded in a note's
+  `sources` frontmatter, never as a folder.
 
-**Foundational subjects** (math, probability, linear algebra, statistics) are the base
-layer. They define concepts but do NOT link upward to their applications.
+### Where a concept is homed
+A concept lives in **its own native subject** folder:
+- `Random Forest` → `Machine Learning/` (an ML method — **never** `Probability/`, even though it
+  uses probability).
+- `Eigenvalues` → `Linear Algebra/`; `Bayes' Theorem` → `Probability/`.
 
-**Applied subjects** (machine learning, computer vision, optimization, NLP, robotics, etc.)
-link DOWN to foundational concepts they use, but foundational notes are not updated to
-link back.
+The "most-foundational" rule **only breaks ties for a concept that genuinely spans topics** — and
+even then you usually decompose: `PCA` (the method) stays in `Machine Learning/` and *links down to*
+`[[Eigenvalues]]` in `Linear Algebra/`. Never relocate an applied concept into a foundational folder
+just because it *uses* foundational tools.
 
-This means links flow in one direction: **applied → foundational**. A computer vision note
-on RANSAC can link to [[Binomial Distribution]] or [[Concentration Inequalities]], but
-those probability notes should NOT be updated to mention RANSAC. This prevents circular
-links and keeps foundational notes clean and stable.
+## Linking rules
 
-**Within the same layer**, notes link freely to each other (a CV note can link to another
-CV note, a probability note can link to another probability note).
+### Directed, acyclic, emergent
+Links express dependency and must stay **acyclic across topics**:
 
-### How to classify a subject
-
-- **Foundational**: probability, statistics, linear algebra, calculus, real analysis,
-  abstract algebra, discrete math, information theory, measure theory
-- **Applied**: machine learning, computer vision, NLP, robotics, optimization,
-  signal processing, control theory, graphical models, deep learning
-
-When unsure, ask: "Does this subject define tools that other fields use?" If yes,
-it's foundational. If it consumes tools from other fields, it's applied.
+- **Within a topic**: notes link freely.
+- **Across topics**: links point only toward **more foundational** topics (applied → foundational).
+  There is **no fixed rank table** — you infer the direction from subject knowledge the first time
+  two topics interact (e.g. `Machine Learning → Probability`), and that direction is then fixed.
+- **Cycle-check (mechanical)**: the concept index (`.vault-index.json`) carries a `topic_edges`
+  graph of observed cross-topic dependencies. Before adding a cross-topic link from topic X to
+  topic Y, confirm it would not reverse an existing dependency (a path Y → … → X). If it would,
+  **do not add the link — flag it** instead. Foundational notes are therefore never edited to link
+  "up" to applied ones.
 
 ### Link sparingly
+Only link when a concept is **meaningfully used**, not name-dropped. Good test: would a reader
+benefit from jumping there to understand the current material? If not, skip it.
 
-Only link when a concept is **meaningfully used**, not just name-dropped. If a note
-mentions "probability" in passing, don't link it. If it derives a formula using Bayes'
-theorem, link [[Bayes' Theorem]].
+### Processing order does not matter
+Classes can be integrated in **any order** — there is no "foundational first" requirement:
+- Link direction comes from subject knowledge, not which class you processed first.
+- A reference to a concept whose note doesn't exist yet is left as a **dangling `[[link]]`**
+  (Obsidian renders it as a to-create note — a useful "not studied yet" marker). It resolves
+  automatically once that note is later created and the vault is re-indexed.
+- If an applied lecture genuinely *teaches* a foundational concept, create that note in its native
+  foundational folder now; the dedicated foundational course later **merges** richer content in.
+  Mere name-drops stay as dangling links — do not create empty stubs.
 
-A good test: would a reader benefit from jumping to that note to understand
-the current material? If not, skip the link.
+## The concept index (`.vault-index.json`)
+Generated by `uv run docparse vault index --vault <path>`. It lists every note as
+`{title, aliases, topic, tags, path, sources}` plus the `topic_edges` graph. **Read it first** to:
+- find whether a concept already exists (match on `title` or `aliases`) — for dedup,
+- resolve `[[links]]` to real notes,
+- run the cross-topic cycle-check.
 
-## Workflow
+This lets you avoid re-reading hundreds of notes; open a full note only when you need to merge into
+it. Re-generate it after an integration pass so new notes and links are picked up.
 
-### 1. Gather inputs
+## Note format
 
-Ask the user for:
-- **Source**: path to the document_parser JSON file (or directory of JSON files)
-- **Vault path**: where to write/update the Obsidian vault
-
-If the user provides a raw PDF instead of JSON, tell them to run document_parser first:
-```
-uv run docparse parse <pdf_path> --output <output_dir>
-```
-
-### 2. Index the existing vault
-
-Before writing anything, read the vault to understand what's already there:
-
-1. List all `.md` files in the vault
-2. For each note, read its **frontmatter** (tags, course, topic) and **first few headings**
-3. Build a mental index: what concepts exist, what subject area each belongs to, what
-   links already exist
-
-This index is critical — it tells you what to link to and prevents duplicate notes.
-
-### 3. Read and analyze the new content
-
-Load the document_parser JSON. The structure is:
-```json
-{
-  "filename": "Gradient Descent.pdf",
-  "pages": [
-    {
-      "page": 1,
-      "text": "raw OCR or text-layer content",
-      "source": "qwen-vl-3b | got-ocr2 | text_layer",
-      "images": [{"id": "p1_img0", "width": 800, "height": 600, "path": "..."}]
-    }
-  ],
-  "metadata": { ... }
-}
-```
-
-Read ALL pages and identify:
-- What subject area is this? (foundational or applied?)
-- What are the distinct topics/concepts?
-- Where do natural topic boundaries fall?
-- What existing vault notes does this content reference or depend on?
-
-### 4. Plan the notes
-
-Decide the note structure before writing anything:
-- One note per major topic/concept
-- Determine which existing notes each new note should link to
-- Respect the linking hierarchy: if this is applied content, identify foundational
-  concepts to link down to. If foundational, only link within the same layer.
-
-### 5. Write each note
-
-For each topic, write a `.md` file using the Write tool.
-
-#### Note format
+Title = filename = the **globally unique concept name**. Do NOT start the body with `# Title`.
 
 ```markdown
 ---
-tags:
-  - topic-tag
-  - subtopic-tag
-source: "Original PDF filename"
-course: "Course number and name (if applicable)"
+aliases: [RVs, random variable]      # alternate names → dedup + link resolution
+topic: Probability                    # the subject folder this note is homed in
+tags: [probability, random-variables]
+sources:                              # provenance — "<course> — <lecture title>"
+  - "21-325 Probability — Lecture 3"
+  - "10-601 Machine Learning — Lecture 7"
 date: YYYY-MM-DD
 ---
 
 ## Overview
+Brief summary of the concept.
 
-Brief summary of what this note covers.
-
-## Section Heading
-
-Content with inline math $f(x) = x^2$ and display math:
-
+## <Section>
+Content with inline math $f(x)=x^2$ and display math:
 $$
 \nabla f(x^{(k)}) = A x^{(k)} - b
 $$
 
-> [!theorem] Theorem Name
-> Statement in clean LaTeX.
-
-> [!definition] Definition Name
+> [!definition] Name
 > Precise definition.
 
-> [!example] Example
-> Worked example or illustration.
-
-> [!note]
-> Additional context or intuition.
-
 ## Related
-
-- [[Other Note In Same Subject]]
+- [[Other Concept In Same Topic]]
 - [[Foundational Concept Used Here]]
 ```
 
-#### Formatting rules
+Formatting rules:
+- **Math**: `$...$` inline, `$$...$$` display, proper LaTeX.
+- **Callouts**: `[!theorem]`, `[!definition]`, `[!lemma]`, `[!proof]`, `[!example]`, `[!note]`,
+  `[!warning]`.
+- **Tags**: lowercase kebab-case; include the subject and specific topics.
+- **aliases**: every plausible alternate name/abbreviation, so future lectures dedup to this note.
+- **Images**: embed with `![[images/p1_img0.png]]`; copy referenced images into the note's topic
+  folder `images/`.
 
-- **Title**: filename IS the title. Do NOT start the body with `# Title`.
-- **Math**: `$...$` inline, `$$...$$` display. Use proper LaTeX commands.
-- **Callouts**: `[!theorem]`, `[!definition]`, `[!lemma]`, `[!proof]`, `[!example]`, `[!note]`, `[!warning]`
-- **Tags**: lowercase kebab-case. Include subject area and specific topics.
-- **Images**: embed with `![[images/p1_img0.png]]` if referenced in parsed data.
+## Merge-on-growth (one canonical note, many sources)
+When new content covers a concept that **already has a note**:
+1. Open the existing note (located via the index).
+2. **Merge additively** — add new sections/details, reconcile overlaps. **Never delete existing
+   content.**
+3. Append the new lecture to `sources` (and add any new `aliases`).
+4. If the new source **conflicts** with existing content (different notation/result), keep both and
+   mark with `> [!warning]`, citing each source — never silently overwrite.
+5. **Split** a section into its own linked note once it has grown into a standalone concept.
 
-### 6. Update the Map of Content
-
-Each subject area should have its own MOC. Create or update the relevant one:
+## Map of Content (MOC)
+- **Per-topic MOC** in each subject folder, e.g. `Probability/MOC - Probability.md`: lists that
+  topic's concepts with one-line summaries.
+- **Top-level `MOC.md`** at the vault root: links to each topic MOC, grouped under discipline
+  headings (Math / Statistics / CS / ML). It is a root-level note (no `topic`) and does not anchor
+  topic dependencies.
 
 ```markdown
 ---
-tags:
-  - MOC
-course: "Course number (if applicable)"
+tags: [MOC]
 ---
-
-## Topics
-
-- [[Note Name]] — one-line summary
-- ...
-
-## Sources
-
-- filename.pdf (N pages, handwritten/typed)
+## Concepts
+- [[Concept]] — one-line summary
 ```
 
-If the vault has multiple subject areas, consider a top-level `MOC.md` that links
-to each subject's MOC.
-
-### 7. Verify
-
-After writing all notes, read back 1-2 to check:
-- LaTeX delimiters are balanced
-- Internal links use exact filenames of existing notes
-- YAML frontmatter is valid
-- Content is complete — nothing dropped
-
-## Multi-PDF workflow
-
-When processing additional PDFs into an existing vault:
-1. Index existing notes first (step 2)
-2. Identify overlapping topics — update existing notes rather than creating duplicates
-3. Add cross-links respecting the hierarchy (applied → foundational only)
-4. Append new sources to the relevant MOC
+## Workflow (per document)
+1. **Index**: run `docparse vault index` and load `.vault-index.json`.
+2. **Clean**: apply the input-specific `vault-from-*` cleanup matching the JSON's `metadata.model`.
+3. **Identify concepts** in the document.
+4. **Per concept**: look it up in the index. If **new**, create the note in its native subject
+   folder (create the folder + topic MOC if missing). If it **exists**, merge per "Merge-on-growth".
+5. **Link** sparingly, respecting the cross-topic DAG + cycle-check.
+6. **Update** the topic MOC and the top-level MOC.
+7. **Verify**: balanced `$...$`/`$$...$$`, valid YAML, links use exact note titles, nothing dropped.
+8. **Re-index** so the next document sees the new state.
 
 ## Folder structure
-
-Organize by subject area, one level deep:
 ```
-Vault/
-├── MOC.md                    (top-level index)
-├── 21-325 Probability/
+~/CMU-Vault/
+├── MOC.md                       (top-level index, grouped by discipline)
+├── .vault-index.json            (generated concept index)
+├── Probability/
 │   ├── MOC - Probability.md
-│   ├── Bayes' Theorem.md
+│   ├── Random Variables.md
+│   └── images/
+├── Linear Algebra/
+│   ├── Eigenvalues.md
 │   └── ...
-├── 16-385 Computer Vision/
-│   ├── MOC - Computer Vision.md
-│   ├── RANSAC.md
-│   └── ...
-└── images/
+├── Machine Learning/
+│   ├── PCA.md          (links to [[Eigenvalues]])
+│   └── Random Forest.md
+└── ...
 ```
-
-Don't nest deeper than one folder. Obsidian resolves `[[links]]` by filename
-regardless of folder, so flat-within-folder works well.
+Don't nest deeper than one folder — Obsidian resolves `[[links]]` by filename regardless of folder.

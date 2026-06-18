@@ -14,8 +14,9 @@ Transform document_parser JSON produced from **handwritten** notes into a well-s
 cross-linked Obsidian vault.
 
 Before anything else, read `.claude/skills/shared/vault-conventions.md` (relative to the repo
-root) — it defines the linking hierarchy, note format, MOC structure, and folder layout
-used here. This skill only adds the input-specific cleanup guidance below.
+root) — it defines the concept-first model, folder layout, note format, linking rules, the concept
+index, and merge-on-growth. This skill only adds the input-specific cleanup guidance below; for
+multi-document batches, `vault-build` orchestrates this skill.
 
 ## Input-specific cleanup (handwriting / Qwen-VL)
 

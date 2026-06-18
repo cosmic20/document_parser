@@ -68,6 +68,48 @@ for page in result.pages:
         print(f"  Image: {img['id']} ({img['width']}x{img['height']})")
 ```
 
+## Batch processing → knowledge vault
+
+Beyond single files, `docparse` can process **folders of class PDFs** and feed them into one
+long-lived, **concept-first Obsidian vault**. The pipeline has two halves:
+
+1. **Deterministic processing (code)** — loop a class folder, route each PDF to the right engine,
+   and write per-document JSON + a `batch_index.json` status queue.
+2. **Vault integration (agent)** — the `vault-build` skill drains that queue into a single vault
+   where *concepts are notes, subjects are folders, and courses are provenance*.
+
+The input contract is **one folder per class** (the folder name is the course, each PDF filename is
+the lecture title):
+
+```bash
+# Scaffold a batch.toml (suggests an engine per PDF + normalized titles to edit)
+docparse batch init "~/Probability"
+
+# Process the class folder → _parsed/<stem>.json + _parsed/batch_index.json
+docparse batch run "~/Probability"          # engine per manifest
+docparse batch run "~/MachineLearning" -e marker   # or override for the whole folder
+
+# Inspect status
+docparse batch status "~/Probability"
+```
+
+Engine routing is **manifest-driven**: `batch init` *suggests* an engine from a text-layer probe
+(typeset → `marker`, scanned/handwritten → `qwen-vl-3b`), which you confirm/override in `batch.toml`.
+
+The vault is a **dedicated standalone folder** (default `~/CMU-Vault/`), kept outside the repo and
+the class folders. Its concept index is maintained deterministically:
+
+```bash
+# Scan the vault → .vault-index.json (concepts, aliases, topics, topic-dependency graph)
+docparse vault index --vault ~/CMU-Vault     # path remembered in ~/.docparse.toml
+```
+
+Then invoke the **`vault-build`** skill (in Claude Code) to integrate the processed documents:
+it dedups each concept to one canonical note, merges new lectures into existing notes, and links
+applied → foundational while keeping cross-topic links acyclic. Classes can be integrated in **any
+order** — forward references become Obsidian dangling links that resolve on re-index. See
+`.claude/skills/shared/vault-conventions.md` for the full vault model.
+
 ## Output format
 
 ```json
@@ -157,10 +199,16 @@ src/document_parser/
 ├── engine.py          # OCREngine / DocumentEngine ABCs, ModelRegistry, @register_engine
 ├── extractor.py       # PyMuPDF: text extraction, page rendering, image extraction
 ├── parser.py          # Smart routing orchestrator (per-page OCR + document backends)
+├── batch.py           # Folder batch processing: manifest, engine suggestion, batch_index.json
+├── vault.py           # Concept index (.vault-index.json) + topic-dependency graph
 ├── models/
 │   ├── got_ocr2.py    # GOT-OCR2 backend
 │   ├── qwen_vl.py     # Qwen2.5-VL backends (default)
 │   └── marker.py      # marker document backend (optional, --extra marker)
 ├── server.py          # FastAPI server
-└── cli.py             # Typer CLI
+└── cli.py             # Typer CLI (parse, batch, vault, models)
 ```
+
+Vault building is driven by Claude Code skills in `.claude/skills/`: `vault-build` (batch
+orchestrator) over `vault-from-marker` / `vault-from-ocr` / `vault-from-handwriting`, all sharing
+`shared/vault-conventions.md`.

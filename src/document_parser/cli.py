@@ -104,6 +104,92 @@ def parse(
     )
 
 
+batch_app = typer.Typer(name="batch", help="Process folders of class PDFs into JSON + an index.")
+app.add_typer(batch_app)
+
+
+@batch_app.command("init")
+def batch_init(
+    folders: list[Path] = typer.Argument(..., help="Class folder(s) to scaffold", exists=True),
+):
+    """Scaffold a batch.toml in each class folder (engine suggestions + normalized titles)."""
+    from document_parser import batch as batch_mod
+
+    for folder in folders:
+        manifest = batch_mod.scaffold_manifest(folder)
+        path = batch_mod.write_manifest(folder, manifest)
+        typer.echo(f"Wrote {path}  (course='{manifest.course}', {len(manifest.documents)} docs)")
+        for d in manifest.documents:
+            typer.echo(f"  - {d.file}  →  '{d.title}'  [{d.engine}]")
+
+
+@batch_app.command("run")
+def batch_run(
+    folders: list[Path] = typer.Argument(..., help="Class folder(s) to process", exists=True),
+    engine: str = typer.Option(None, "--engine", "-e", help="Override engine for all documents"),
+    force: bool = typer.Option(False, "--force", help="Reprocess already-processed documents"),
+    dpi: int = typer.Option(200, "--dpi", help="Render DPI for page images"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+):
+    """Process pending PDFs in each class folder, writing _parsed/ JSON + batch_index.json."""
+    from document_parser import batch as batch_mod
+
+    _setup_logging(verbose)
+    if engine and engine not in ModelRegistry.available():
+        typer.echo(f"Error: Unknown engine '{engine}'. Available: {', '.join(ModelRegistry.available())}")
+        raise typer.Exit(1)
+
+    for folder in folders:
+        typer.echo(f"Class: {folder.name}")
+        entries = batch_mod.run_folder(folder, engine_override=engine, force=force, dpi=dpi)
+        done = sum(e.status in ("processed", "integrated") for e in entries.values())
+        typer.echo(f"  {done}/{len(entries)} documents processed → {batch_mod.index_path(folder)}")
+
+
+@batch_app.command("status")
+def batch_status(
+    folder: Path = typer.Argument(..., help="Class folder to inspect", exists=True),
+):
+    """Print the batch index (document → engine → status) for a class folder."""
+    from document_parser import batch as batch_mod
+
+    entries = batch_mod.load_index(folder)
+    if not entries:
+        typer.echo(f"No batch index in {folder} (run 'docparse batch run' first).")
+        raise typer.Exit()
+
+    width = max(len(e.title) for e in entries.values())
+    typer.echo(f"{'TITLE':<{width}}  {'ENGINE':<11}  {'STATUS':<10}  PAGES")
+    for e in entries.values():
+        typer.echo(f"{e.title:<{width}}  {e.engine:<11}  {e.status:<10}  {e.pages}")
+
+
+vault_app = typer.Typer(name="vault", help="Maintain the concept index for the Obsidian vault.")
+app.add_typer(vault_app)
+
+
+@vault_app.command("index")
+def vault_index(
+    vault: Path = typer.Option(
+        None, "--vault", help="Vault path (remembered in ~/.docparse.toml)", exists=True
+    ),
+):
+    """Scan the vault into .vault-index.json (concepts + topic-dependency graph)."""
+    from document_parser import vault as vault_mod
+
+    path = vault or vault_mod.load_config_vault_path()
+    if path is None:
+        typer.echo("Error: no vault path. Pass --vault <path> once; it is then remembered.")
+        raise typer.Exit(1)
+    if vault is not None:
+        vault_mod.save_config_vault_path(vault)
+
+    out, index = vault_mod.write_index(path)
+    topics = sorted({n["topic"] for n in index["notes"] if n["topic"]})
+    typer.echo(f"Indexed {len(index['notes'])} notes across {len(topics)} topics → {out}")
+    typer.echo(f"Topic dependencies: {sum(len(v) for v in index['topic_edges'].values())} edges")
+
+
 @app.command()
 def models():
     """List available OCR model backends."""
