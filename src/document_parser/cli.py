@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from pathlib import Path
 
 import typer
 
-from document_parser.engine import ModelRegistry
+from document_parser.engine import ModelRegistry, ParseResult
 from document_parser.parser import DEFAULT_MODEL, DocumentParser
 
 # Ensure backends are registered
@@ -38,6 +37,9 @@ def parse(
     output: Path = typer.Option(None, "--output", "-o", help="Output directory"),
     format: str = typer.Option("json", "--format", "-f", help="Output format: json or markdown"),
     force_ocr: bool = typer.Option(False, "--force-ocr", help="Force OCR on all pages"),
+    use_llm: bool = typer.Option(
+        False, "--use-llm", help="Enable LLM augmentation (document backends like marker)"
+    ),
     dpi: int = typer.Option(200, "--dpi", help="Render DPI for page images"),
     text_threshold: int = typer.Option(
         10, "--text-threshold", help="Min chars to consider text layer usable"
@@ -69,6 +71,7 @@ def parse(
         dpi=dpi,
         text_threshold=text_threshold,
         force_ocr=force_ocr,
+        use_llm=use_llm,
     )
 
     result = parser.parse(source=source, output_dir=output)
@@ -111,7 +114,7 @@ def models():
         typer.echo(f"  - {name}{default_marker}")
 
 
-def _to_markdown(result: "ParseResult") -> str:
+def _to_markdown(result: ParseResult) -> str:
     """Convert a ParseResult to a simple markdown document."""
     lines = [
         f"# {result.filename}",

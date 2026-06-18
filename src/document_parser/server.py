@@ -36,6 +36,9 @@ async def parse_document(
     file: UploadFile = File(...),
     model: str = Query(default=DEFAULT_MODEL, description="OCR model backend to use"),
     force_ocr: bool = Query(default=False, description="Force OCR on all pages"),
+    use_llm: bool = Query(
+        default=False, description="Enable LLM augmentation (document backends like marker)"
+    ),
     dpi: int = Query(default=200, ge=72, le=600, description="Render DPI for page images"),
     output_images: bool = Query(
         default=True, description="Whether to save extracted images to disk"
@@ -65,6 +68,7 @@ async def parse_document(
         model=model,
         dpi=dpi,
         force_ocr=force_ocr,
+        use_llm=use_llm,
     )
 
     result = parser.parse(source=content, output_dir=output_dir, filename=filename)

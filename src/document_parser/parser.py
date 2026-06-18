@@ -6,6 +6,8 @@ import logging
 import time
 from pathlib import Path
 
+from tqdm import tqdm
+
 from document_parser.engine import ModelRegistry, PageResult, ParseResult
 from document_parser.extractor import PDFExtractor, is_image_file
 
@@ -32,10 +34,12 @@ class DocumentParser:
         text_threshold: int = TEXT_THRESHOLD,
         force_ocr: bool = False,
         min_image_size: int = 150,
+        use_llm: bool = False,
     ):
         self.model_name = model
         self.force_ocr = force_ocr
         self.text_threshold = text_threshold
+        self.use_llm = use_llm  # only honored by document backends (e.g. marker)
         self.extractor = PDFExtractor(dpi=dpi, min_image_size=min_image_size)
 
     def parse(
@@ -60,6 +64,11 @@ class DocumentParser:
             images_dir = Path(output_dir) / "images"
             images_dir.mkdir(parents=True, exist_ok=True)
 
+        # Document-level backends (e.g. marker) own the whole document: they do their
+        # own rendering, routing, and image extraction. Bypass the per-page loop.
+        if ModelRegistry.kind(self.model_name) == "document":
+            return self._parse_document(source, filename, images_dir, start)
+
         # Extract pages
         logger.info(f"Extracting pages from {filename}...")
         extract_start = time.perf_counter()
@@ -80,7 +89,10 @@ class DocumentParser:
         total_images = 0
         engine = None  # lazy load only if needed
 
-        for extracted_page in pages:
+        # Progress bar with live ETA over the per-page OCR loop. Per-page detail is
+        # demoted to DEBUG (shown with -v) so it doesn't clobber the bar by default.
+        page_bar = tqdm(pages, desc="Parsing pages", unit="page")
+        for extracted_page in page_bar:
             page_num = extracted_page.page_num
 
             # Save embedded images
@@ -108,22 +120,24 @@ class DocumentParser:
                     engine = ModelRegistry.get(self.model_name)
                     engine.ensure_loaded()
 
-                logger.info(
-                    f"  Page {page_num}/{len(pages)}: running OCR ({self.model_name})..."
-                )
-                page_start = time.perf_counter()
+                logger.debug(f"  Page {page_num}/{len(pages)}: running OCR ({self.model_name})...")
                 result = engine.run_timed(extracted_page.image, page_num)
                 result.images = image_refs
-                page_ms = (time.perf_counter() - page_start) * 1000
-                logger.info(
+                logger.debug(
                     f"  Page {page_num}/{len(pages)}: OCR done "
-                    f"({len(result.text)} chars, {page_ms:.0f}ms)"
+                    f"({len(result.text)} chars, {result.elapsed_ms:.0f}ms)"
+                )
+                page_bar.set_postfix_str(
+                    f"p{page_num} OCR {len(result.text)}c {result.elapsed_ms:.0f}ms"
                 )
                 ocr_page_count += 1
             else:
-                logger.info(
+                logger.debug(
                     f"  Page {page_num}/{len(pages)}: text layer "
                     f"({len(extracted_page.text.strip())} chars)"
+                )
+                page_bar.set_postfix_str(
+                    f"p{page_num} text-layer {len(extracted_page.text.strip())}c"
                 )
                 result = PageResult(
                     page=page_num,
@@ -134,6 +148,8 @@ class DocumentParser:
                 text_layer_count += 1
 
             results.append(result)
+
+        page_bar.close()
 
         elapsed = (time.perf_counter() - start) * 1000
 
@@ -152,6 +168,47 @@ class DocumentParser:
                 "text_layer_pages": text_layer_count,
                 "images_extracted": total_images,
                 "model": self.model_name,
+                "force_ocr": self.force_ocr,
+                "elapsed_ms": round(elapsed, 1),
+            },
+        )
+
+    def _parse_document(
+        self,
+        source: str | Path | bytes,
+        filename: str,
+        images_dir: Path | None,
+        start: float,
+    ) -> ParseResult:
+        """Delegate the whole document to a document-level backend (e.g. marker)."""
+        logger.info(f"Loading document engine: {self.model_name}")
+        engine = ModelRegistry.get(self.model_name)
+        engine.use_llm = self.use_llm
+        engine.ensure_loaded()
+
+        logger.info(f"Running {self.model_name} on the whole document...")
+        pages = engine.run_document(source, images_dir)
+
+        total_images = sum(len(p.images) for p in pages)
+        elapsed = (time.perf_counter() - start) * 1000
+
+        logger.info(
+            f"Done: {len(pages)} pages, {total_images} images, {elapsed:.0f}ms "
+            f"(via {self.model_name})"
+        )
+
+        return ParseResult(
+            filename=filename,
+            pages=pages,
+            metadata={
+                # marker does its own text-layer/OCR routing internally, so the
+                # text_layer-vs-OCR split isn't meaningful here.
+                "total_pages": len(pages),
+                "ocr_pages": len(pages),
+                "text_layer_pages": 0,
+                "images_extracted": total_images,
+                "model": self.model_name,
+                "use_llm": self.use_llm,
                 "force_ocr": self.force_ocr,
                 "elapsed_ms": round(elapsed, 1),
             },
