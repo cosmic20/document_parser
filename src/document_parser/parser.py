@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from tqdm import tqdm
@@ -47,8 +48,14 @@ class DocumentParser:
         source: str | Path | bytes,
         output_dir: str | Path | None = None,
         filename: str | None = None,
+        progress: Callable[[dict], None] | None = None,
     ) -> ParseResult:
-        """Parse a PDF or image file into structured text + images."""
+        """Parse a PDF or image file into structured text + images.
+
+        ``progress``, when given, is called once per page with a small event dict
+        (``type="page"``, page/total, source, chars, elapsed_ms) — used by the web UI to
+        stream live progress. It does not affect the CLI's tqdm bar.
+        """
         start = time.perf_counter()
 
         # Determine filename
@@ -148,6 +155,18 @@ class DocumentParser:
                 text_layer_count += 1
 
             results.append(result)
+
+            if progress is not None:
+                progress(
+                    {
+                        "type": "page",
+                        "page": page_num,
+                        "total": len(pages),
+                        "source": result.source,
+                        "chars": len(result.text),
+                        "elapsed_ms": round(result.elapsed_ms, 1),
+                    }
+                )
 
         page_bar.close()
 

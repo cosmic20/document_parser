@@ -34,19 +34,53 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
 # --------------------------------------------------------------------------- config
 
 
+def _load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    with open(CONFIG_PATH, "rb") as f:
+        return tomllib.load(f)
+
+
+def _save_config(cfg: dict) -> None:
+    """Write the whole config back, preserving every section (flat string tables)."""
+    lines: list[str] = []
+    for section, vals in cfg.items():
+        lines.append(f"[{section}]")
+        for k, v in vals.items():
+            lines.append(f'{k} = "{v}"')
+        lines.append("")
+    CONFIG_PATH.write_text("\n".join(lines))
+
+
+def _load_path(section: str) -> Path | None:
+    p = _load_config().get(section, {}).get("path")
+    return Path(p).expanduser() if p else None
+
+
+def _save_path(section: str, path: Path) -> None:
+    cfg = _load_config()
+    cfg.setdefault(section, {})["path"] = str(Path(path).expanduser())
+    _save_config(cfg)
+
+
 def load_config_vault_path() -> Path | None:
     """Read the remembered vault path from ``~/.docparse.toml`` (``[vault] path``)."""
-    if not CONFIG_PATH.exists():
-        return None
-    with open(CONFIG_PATH, "rb") as f:
-        data = tomllib.load(f)
-    p = data.get("vault", {}).get("path")
-    return Path(p).expanduser() if p else None
+    return _load_path("vault")
 
 
 def save_config_vault_path(path: Path) -> None:
     """Remember the vault path in ``~/.docparse.toml`` so it isn't retyped."""
-    CONFIG_PATH.write_text(f'[vault]\npath = "{Path(path).expanduser()}"\n')
+    _save_path("vault", path)
+
+
+def load_config_workspace_path() -> Path | None:
+    """Read the remembered workspace root (where class folders live) from config."""
+    return _load_path("workspace")
+
+
+def save_config_workspace_path(path: Path) -> None:
+    """Remember the workspace root in ``~/.docparse.toml``."""
+    _save_path("workspace", path)
 
 
 # ----------------------------------------------------------------------- note model

@@ -16,3 +16,5 @@ test_*/
 resources/
 PLAN.md
 plan-part-*.md
+web/node_modules/
+web/dist/

@@ -110,6 +110,29 @@ applied → foundational while keeping cross-topic links acyclic. Classes can be
 order** — forward references become Obsidian dangling links that resolve on re-index. See
 `.claude/skills/shared/vault-conventions.md` for the full vault model.
 
+## Web app (local UI)
+
+A local, click-driven UI over the whole flow — upload, route, process with live progress, review
+parsed output, then a **Vaultify** button that runs the Claude Code `vault-build` skill in an
+embedded terminal. Everything runs on your machine (FastAPI + your MPS); the finished vault is a
+local folder you open in Obsidian.
+
+```bash
+# one-time: build the frontend
+cd web && npm install && npm run build && cd ..
+
+# launch (serves UI + API at http://localhost:8765, opens the browser)
+uv run docparse web
+```
+
+For frontend development, run the Vite dev server (`cd web && npm run dev`) alongside
+`uv run docparse web` — the dev server proxies `/api` (and WebSockets) to the backend.
+
+Screens: **Library** (classes), **Process** (per-PDF engine/title + run with per-page progress),
+**Review** (source page vs parsed text/images side by side), **Vaultify** (embedded Claude Code
+terminal running `vault-build`). The backend lives in `src/document_parser/webapp.py`; the UI in
+`web/`.
+
 ## Output format
 
 ```json
@@ -205,8 +228,12 @@ src/document_parser/
 │   ├── got_ocr2.py    # GOT-OCR2 backend
 │   ├── qwen_vl.py     # Qwen2.5-VL backends (default)
 │   └── marker.py      # marker document backend (optional, --extra marker)
-├── server.py          # FastAPI server
-└── cli.py             # Typer CLI (parse, batch, vault, models)
+├── server.py          # FastAPI server (single-file /parse API)
+├── webapp.py          # FastAPI app for the local web UI (classes, process, review, terminal)
+├── jobs.py            # Background processing jobs + progress events for the web app
+└── cli.py             # Typer CLI (parse, batch, vault, web, models)
+
+web/                   # Vite + React + xterm.js frontend (built to web/dist, served by webapp.py)
 ```
 
 Vault building is driven by Claude Code skills in `.claude/skills/`: `vault-build` (batch

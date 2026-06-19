@@ -191,6 +191,33 @@ def vault_index(
 
 
 @app.command()
+def web(
+    port: int = typer.Option(8765, "--port", help="Port to serve on"),
+    no_open: bool = typer.Option(False, "--no-open", help="Don't open the browser"),
+):
+    """Launch the local web app (processing UI + Vaultify)."""
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from document_parser.webapp import WEB_DIST
+
+    if not WEB_DIST.is_dir():
+        typer.echo(
+            "Note: the web UI isn't built yet — only the API will serve.\n"
+            "      Build it with:  cd web && npm install && npm run build\n"
+            "      (or run the dev server separately:  cd web && npm run dev)\n"
+        )
+
+    url = f"http://localhost:{port}"
+    if not no_open:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    typer.echo(f"Serving docparse web at {url}  (Ctrl-C to stop)")
+    uvicorn.run("document_parser.webapp:app", host="127.0.0.1", port=port)
+
+
+@app.command()
 def models():
     """List available OCR model backends."""
     available = ModelRegistry.available()

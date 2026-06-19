@@ -132,6 +132,25 @@ def test_run_folder_processes_marks_and_resumes(tmp_path):
     assert jp.exists()
 
 
+def test_external_source_outputs_to_work_dir(tmp_path):
+    # Registered class: PDFs live in an external source; outputs must land in the work dir,
+    # leaving the source folder pristine.
+    ext = tmp_path / "src"
+    ext.mkdir()
+    _make_pdf(ext / "lec1.pdf", text=None)
+    work = tmp_path / "work"
+    work.mkdir()
+    b.write_manifest(work, b.scaffold_manifest(work, source=ext))
+
+    assert b.load_manifest(work).source == str(ext)
+    assert b.source_dir(work) == ext
+
+    entries = b.run_folder(work, engine_override="stub-ocr")
+    assert entries["lec1.pdf"].status == "processed"
+    assert (work / "_parsed" / "lec1" / "lec1.json").exists()  # output in work dir
+    assert not (ext / "_parsed").exists()  # source untouched
+
+
 def test_run_folder_without_manifest_derives_everything(tmp_path):
     cls = tmp_path / "Optimization"
     cls.mkdir()

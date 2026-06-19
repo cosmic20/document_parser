@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -58,6 +59,9 @@ class BatchManifest:
     course: str
     default_engine: str
     documents: list[DocEntry] = field(default_factory=list)
+    # External source folder the PDFs are read from. When set (a "registered" class), the work
+    # folder still owns the generated batch.toml / _parsed output, leaving the source pristine.
+    source: str | None = None
 
 
 @dataclass
@@ -131,19 +135,29 @@ def list_pdfs(folder: Path) -> list[Path]:
 # ------------------------------------------------------------------------ manifest
 
 
-def scaffold_manifest(folder: Path) -> BatchManifest:
-    """Build a manifest by scanning the folder: course = folder name, per-PDF title + engine."""
+def scaffold_manifest(folder: Path, source: Path | None = None) -> BatchManifest:
+    """Build a manifest by scanning for PDFs: course = work folder name, per-PDF title + engine.
+
+    ``source`` (when given) is an external folder the PDFs are read from; the work ``folder`` still
+    owns the generated batch.toml / _parsed output.
+    """
+    src = source or folder
     docs = [
         DocEntry(
             file=pdf.name,
             title=normalize_title(pdf.stem),
             engine=suggest_engine(pdf),
         )
-        for pdf in list_pdfs(folder)
+        for pdf in list_pdfs(src)
     ]
     # Default engine = the majority suggestion, so a homogeneous class needs no per-file edits.
     default = max(("marker", "qwen-vl-3b"), key=lambda e: sum(d.engine == e for d in docs)) if docs else DEFAULT_MODEL
-    return BatchManifest(course=folder.name, default_engine=default, documents=docs)
+    return BatchManifest(
+        course=folder.name,
+        default_engine=default,
+        documents=docs,
+        source=str(source) if source else None,
+    )
 
 
 def load_manifest(folder: Path) -> BatchManifest | None:
@@ -165,6 +179,7 @@ def load_manifest(folder: Path) -> BatchManifest | None:
         course=data.get("course", folder.name),
         default_engine=data.get("default_engine", DEFAULT_MODEL),
         documents=docs,
+        source=data.get("source"),
     )
 
 
@@ -177,8 +192,10 @@ def render_manifest_toml(manifest: BatchManifest) -> str:
     lines = [
         f'course = "{_toml_escape(manifest.course)}"',
         f'default_engine = "{_toml_escape(manifest.default_engine)}"',
-        "",
     ]
+    if manifest.source:
+        lines.append(f'source = "{_toml_escape(manifest.source)}"')
+    lines.append("")
     for d in manifest.documents:
         lines += [
             "[[documents]]",
@@ -194,6 +211,14 @@ def write_manifest(folder: Path, manifest: BatchManifest) -> Path:
     path = folder / MANIFEST_FILENAME
     path.write_text(render_manifest_toml(manifest))
     return path
+
+
+def source_dir(work_dir: Path) -> Path:
+    """Where a class's PDFs live: the manifest's external ``source`` if set, else the work dir."""
+    m = load_manifest(work_dir)
+    if m and m.source:
+        return Path(m.source).expanduser()
+    return work_dir
 
 
 # --------------------------------------------------------------------------- index
@@ -235,30 +260,41 @@ def resolve_engine(doc: DocEntry, manifest: BatchManifest, override: str | None)
     return manifest.default_engine
 
 
+def _emit(cb: Callable[[dict], None] | None, event: dict) -> None:
+    if cb is not None:
+        cb(event)
+
+
 def run_folder(
     folder: Path,
     engine_override: str | None = None,
     force: bool = False,
     dpi: int = 200,
+    progress: Callable[[dict], None] | None = None,
 ) -> dict[str, IndexEntry]:
     """Process every pending PDF in one class folder; update and persist its batch index.
 
     Idempotent: documents already ``processed``/``integrated`` are skipped unless ``force``.
-    Returns the updated index entries.
+    ``progress``, when given, receives ``doc_start`` / ``page`` / ``doc_done`` / ``doc_skipped``
+    event dicts (consumed by the web UI). Returns the updated index entries.
     """
     folder = Path(folder)
     manifest = load_manifest(folder) or scaffold_manifest(folder)
+    src_dir = Path(manifest.source).expanduser() if manifest.source else folder
     entries = load_index(folder)
 
-    for doc in manifest.documents:
-        src = folder / doc.file
+    total_docs = len(manifest.documents)
+    for idx, doc in enumerate(manifest.documents):
+        src = src_dir / doc.file
         if not src.exists():
             logger.warning(f"  skipping {doc.file}: not found")
+            _emit(progress, {"type": "doc_skipped", "file": doc.file, "reason": "not found"})
             continue
 
         existing = entries.get(doc.file)
         if existing and existing.status in ("processed", "integrated") and not force:
             logger.info(f"  skip {doc.file} (already {existing.status})")
+            _emit(progress, {"type": "doc_skipped", "file": doc.file, "reason": existing.status})
             continue
 
         engine = resolve_engine(doc, manifest, engine_override)
@@ -271,10 +307,20 @@ def run_folder(
         out_dir = folder / PARSED_DIRNAME / src.stem
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        _emit(progress, {
+            "type": "doc_start", "file": doc.file, "title": doc.title,
+            "engine": engine, "index": idx, "total_docs": total_docs,
+        })
         logger.info(f"  processing {doc.file} with {engine}...")
         start = time.perf_counter()
         parser = DocumentParser(model=engine, dpi=dpi)
-        result = parser.parse(source=src, output_dir=out_dir)
+
+        page_cb = None
+        if progress is not None:
+            def page_cb(ev, _file=doc.file):
+                _emit(progress, {**ev, "file": _file})
+
+        result = parser.parse(source=src, output_dir=out_dir, progress=page_cb)
         elapsed = (time.perf_counter() - start) * 1000
 
         json_path = out_dir / f"{src.stem}.json"
@@ -293,5 +339,10 @@ def run_folder(
         )
         # Persist after each doc so an interrupted run resumes cleanly.
         save_index(folder, manifest.course, entries)
+        _emit(progress, {
+            "type": "doc_done", "file": doc.file,
+            "pages": entries[doc.file].pages, "images": entries[doc.file].images,
+            "elapsed_ms": entries[doc.file].elapsed_ms, "status": "processed",
+        })
 
     return entries
