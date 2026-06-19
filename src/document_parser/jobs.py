@@ -33,6 +33,15 @@ def get_job(job_id: str) -> Job | None:
     return _jobs.get(job_id)
 
 
+def list_active() -> list[dict]:
+    """Jobs that are queued or running (for the web app's 'what's running' indicator)."""
+    return [
+        {"id": j.id, "class_id": j.class_id, "status": j.status}
+        for j in _jobs.values()
+        if j.status in ("queued", "running")
+    ]
+
+
 def start_processing(
     class_id: str, class_dir: Path, engine: str | None, force: bool
 ) -> Job:

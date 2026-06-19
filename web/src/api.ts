@@ -72,6 +72,11 @@ export const api = {
   documentJson: (id: string, stem: string) => j(`/api/classes/${enc(id)}/documents/${enc(stem)}`),
   config: () => j<{ workspace: string; vault: string | null }>("/api/config"),
   pickFolder: () => j<{ path: string | null }>("/api/pick-folder", { method: "POST" }),
+  activity: () =>
+    j<{ processing: { id: string; class_id: string; status: string }[]; terminals: string[] }>(
+      "/api/activity",
+    ),
+  stopTerminal: (id: string) => j(`/api/classes/${enc(id)}/terminal/stop`, { method: "POST" }),
 };
 
 export const pageImg = (id: string, stem: string, page: number) =>

@@ -37,6 +37,11 @@ body {
 .sidebar nav a:hover { background: var(--bg); }
 .sidebar-foot { margin-top: auto; color: var(--muted); font-size: 12px; }
 
+.activity { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+.activity-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+.activity-item { font-size: 13px; text-decoration: none; color: var(--text); padding: 4px 8px; border-radius: 6px; background: var(--bg); }
+.activity-item:hover { background: #ecebfb; }
+
 .main { flex: 1; padding: 28px 36px; max-width: 1100px; }
 h1 { margin: 8px 0 16px; font-size: 24px; }
 h3 { margin: 0 0 8px; font-size: 14px; }

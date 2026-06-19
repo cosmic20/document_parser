@@ -61,17 +61,19 @@ export default function Vaultify() {
       <h1>Vaultify — {cid}</h1>
       <p className="muted">
         Claude Code is running the <code>vault-build</code> skill against this class's processed
-        documents. Watch it work, answer any permission prompts, then open your vault in Obsidian.
+        documents. Watch it work and answer any permission prompts. You can leave this page (e.g. to
+        process another class) and come back — the session keeps running.
       </p>
       <div className="terminal-wrap" ref={ref} />
-      {vaultPath && (
-        <div className="actions">
+      <div className="actions">
+        <button onClick={() => api.stopTerminal(cid)}>Stop session</button>
+        {vaultPath && (
           <a className="btn primary" href={`obsidian://open?path=${encodeURIComponent(vaultPath)}`}>
             Open vault in Obsidian
           </a>
-          <span className="muted">{vaultPath}</span>
-        </div>
-      )}
+        )}
+        {vaultPath && <span className="muted">{vaultPath}</span>}
+      </div>
     </div>
   );
 }

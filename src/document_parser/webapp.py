@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from document_parser import batch, jobs, vault
+from document_parser import batch, jobs, terminals, vault
 from document_parser.engine import ModelRegistry
 from document_parser.parser import DEFAULT_MODEL
 
@@ -337,19 +337,13 @@ def document_image(class_id: str, stem: str, img: str) -> FileResponse:
 
 @app.websocket("/api/classes/{class_id}/terminal")
 async def terminal(ws: WebSocket, class_id: str) -> None:
-    """Bridge an interactive Claude Code session (in a PTY) to xterm.js for 'Vaultify'.
+    """Attach the browser terminal to this class's persistent Claude Code (vault-build) session.
 
-    Claude runs in the repo root (so the project skills resolve) with an initial prompt that
-    invokes the ``vault-build`` skill against this class's processed docs. The user watches and
-    steers it in the browser terminal — including answering permission prompts.
+    The session lives in ``terminals.manager`` independent of this socket: disconnecting *detaches*
+    (claude keeps running, so document processing can run concurrently) and reconnecting
+    *re-attaches* and replays recent output. claude runs in the repo root so the skills resolve.
     """
-    import fcntl
-    import os
-    import pty
     import shutil
-    import signal
-    import struct
-    import termios
 
     await ws.accept()
     try:
@@ -358,73 +352,68 @@ async def terminal(ws: WebSocket, class_id: str) -> None:
         await ws.send_text(f"{e.detail}\r\n")
         await ws.close()
         return
-    if shutil.which("claude") is None:
-        await ws.send_text("Claude Code CLI ('claude') not found on PATH.\r\n")
-        await ws.close()
-        return
 
-    vault_path = vault.load_config_vault_path() or (Path.home() / "CMU-Vault")
-    prompt = (
-        f"Use the vault-build skill to integrate the processed documents in '{d}' into the "
-        f"Obsidian vault at '{vault_path}'. Read that class folder's _parsed/batch_index.json "
-        f"and only integrate documents whose status is 'processed'."
-    )
+    session = terminals.manager.get(class_id)
+    if session is None:
+        if shutil.which("claude") is None:
+            await ws.send_text("Claude Code CLI ('claude') not found on PATH.\r\n")
+            await ws.close()
+            return
+        vault_path = vault.load_config_vault_path() or (Path.home() / "CMU-Vault")
+        prompt = (
+            f"Use the vault-build skill to integrate the processed documents in '{d}' into the "
+            f"Obsidian vault at '{vault_path}'. Read that class folder's _parsed/batch_index.json "
+            f"and only integrate documents whose status is 'processed'."
+        )
+        session = terminals.manager.ensure(class_id, REPO_ROOT, ["claude", prompt])
 
-    pid, fd = pty.fork()
-    if pid == 0:  # child becomes claude
-        os.chdir(str(REPO_ROOT))
-        os.execvp("claude", ["claude", prompt])
-        os._exit(1)  # only reached if exec fails
+    if session.buffer:  # replay recent scrollback to the (re)attaching terminal
+        await ws.send_bytes(bytes(session.buffer))
+    session.ws = ws
 
-    loop = asyncio.get_running_loop()
-
-    async def pty_to_ws() -> None:
-        while True:
-            try:
-                data = await loop.run_in_executor(None, os.read, fd, 4096)
-            except OSError:
-                break
-            if not data:
-                break
-            try:
-                await ws.send_bytes(data)
-            except Exception:
-                break
-
-    async def ws_to_pty() -> None:
+    try:
         while True:
             msg = await ws.receive()
             if msg.get("type") == "websocket.disconnect":
                 break
             if msg.get("bytes") is not None:
-                os.write(fd, msg["bytes"])  # keystrokes
+                terminals.manager.write(session, msg["bytes"])  # keystrokes
             elif msg.get("text") is not None:
                 try:
                     ctrl = json.loads(msg["text"])
                 except json.JSONDecodeError:
-                    os.write(fd, msg["text"].encode())
+                    terminals.manager.write(session, msg["text"].encode())
                     continue
                 if "resize" in ctrl:  # {"resize": {"rows": R, "cols": C}}
-                    r, c = int(ctrl["resize"]["rows"]), int(ctrl["resize"]["cols"])
-                    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", r, c, 0, 0))
-
-    tasks = [asyncio.create_task(pty_to_ws()), asyncio.create_task(ws_to_pty())]
-    try:
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    terminals.manager.resize(
+                        session, int(ctrl["resize"]["rows"]), int(ctrl["resize"]["cols"])
+                    )
     except WebSocketDisconnect:
         pass
     finally:
-        for t in tasks:
-            t.cancel()
-        for killer in (lambda: os.kill(pid, signal.SIGTERM), lambda: os.waitpid(pid, 0), lambda: os.close(fd)):
-            try:
-                killer()
-            except OSError:
-                pass
+        if session.ws is ws:  # detach but leave claude running
+            session.ws = None
         try:
             await ws.close()
         except Exception:
             pass
+
+
+@app.post("/api/classes/{class_id}/terminal/stop")
+def stop_terminal(class_id: str) -> dict:
+    terminals.manager.stop(class_id)
+    return {"ok": True}
+
+
+@app.get("/api/activity")
+def activity() -> dict:
+    """What's currently running — for the sidebar indicator (processing jobs + live terminals)."""
+    return {"processing": jobs.list_active(), "terminals": terminals.manager.active_class_ids()}
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    terminals.manager.shutdown()
 
 
 # ----------------------------------------------------------- static SPA (built UI)
