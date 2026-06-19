@@ -128,6 +128,16 @@ uv run docparse web
 For frontend development, run the Vite dev server (`cd web && npm run dev`) alongside
 `uv run docparse web` — the dev server proxies `/api` (and WebSockets) to the backend.
 
+**Adding a class — two ways:**
+- **New class — upload PDFs** — makes an empty class and you upload PDFs into the workspace.
+- **Use a folder I already have** — a native **Choose folder…** picker (macOS) registers an
+  *existing* folder of PDFs. They're read **in place** and never moved; all generated artifacts
+  (`batch.toml`, `_parsed/`, the index) are written into the workspace instead, leaving your source
+  folder pristine.
+
+Classes live under a workspace (`~/Documents/docparse-classes/` by default); the workspace and
+vault paths are remembered in `~/.docparse.toml`.
+
 Screens: **Library** (classes), **Process** (per-PDF engine/title + run with per-page progress),
 **Review** (source page vs parsed text/images side by side), **Vaultify** (embedded Claude Code
 terminal running `vault-build`). The backend lives in `src/document_parser/webapp.py`; the UI in
