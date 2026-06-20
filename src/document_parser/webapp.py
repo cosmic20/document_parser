@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
 from dataclasses import asdict
 from pathlib import Path
@@ -365,7 +366,12 @@ async def terminal(ws: WebSocket, class_id: str) -> None:
             f"Obsidian vault at '{vault_path}'. Read that class folder's _parsed/batch_index.json "
             f"and only integrate documents whose status is 'processed'."
         )
-        session = terminals.manager.ensure(class_id, REPO_ROOT, ["claude", prompt])
+        # vault-build is structured translation/organization work — Sonnet handles it well and
+        # burns far less of the usage limit than Opus. Override with DOCPARSE_AGENT_MODEL="opus"
+        # (or "" to use the CLI default).
+        model = os.environ.get("DOCPARSE_AGENT_MODEL", "sonnet")
+        argv = ["claude", "--model", model, prompt] if model else ["claude", prompt]
+        session = terminals.manager.ensure(class_id, REPO_ROOT, argv)
 
     if session.buffer:  # replay recent scrollback to the (re)attaching terminal
         await ws.send_bytes(bytes(session.buffer))
