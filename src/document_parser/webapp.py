@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import queue
 from dataclasses import asdict
 from pathlib import Path
 
@@ -271,24 +270,29 @@ def process(class_id: str, body: ProcessIn) -> dict:
 
 @app.websocket("/api/jobs/{job_id}/events")
 async def job_events(ws: WebSocket, job_id: str) -> None:
+    """Stream a job's progress. Replays the event history from the start, then follows new events,
+    so a client that left and came back to an in-flight job sees the whole live log."""
     await ws.accept()
     job = jobs.get_job(job_id)
     if job is None:
         await ws.send_json({"type": "error", "message": "unknown job"})
         await ws.close()
         return
-    while True:
-        try:
-            ev = await asyncio.to_thread(job.queue.get, True, 0.5)
-        except queue.Empty:
-            continue
-        try:
-            await ws.send_json(ev)
-        except Exception:
-            break
-        if ev.get("type") == "job_done":
-            break
-    await ws.close()
+    cursor = 0
+    try:
+        while True:
+            if cursor < len(job.events):
+                ev = job.events[cursor]
+                cursor += 1
+                await ws.send_json(ev)
+                if ev.get("type") == "job_done":
+                    break
+            else:
+                await asyncio.sleep(0.2)  # caught up; wait for the worker to append more
+    except Exception:
+        pass  # client went away — the job keeps running; a reconnect replays from the start
+    finally:
+        await ws.close()
 
 
 # ------------------------------------------------------------------------- documents

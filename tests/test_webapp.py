@@ -122,6 +122,32 @@ def test_process_streams_progress_and_produces_output(client):
     assert png.status_code == 200 and png.headers["content-type"] == "image/png"
 
 
+def test_job_events_replay_on_reconnect(client):
+    """Leaving the page and coming back must replay the in-flight job's log, not show nothing."""
+    cid = _create_class(client)
+    client.post(
+        f"/api/classes/{cid}/files",
+        files=[("files", ("lec1.pdf", _pdf_bytes(text=None), "application/pdf"))],
+    )
+    job_id = client.post(f"/api/classes/{cid}/process", json={"engine": "stub-ocr"}).json()["job_id"]
+
+    # First connection drains to completion (simulating the original tab).
+    with client.websocket_connect(f"/api/jobs/{job_id}/events") as ws:
+        while ws.receive_json()["type"] != "job_done":
+            pass
+
+    # Reconnecting (the "came back" tab) replays the whole history from the start — the queue model
+    # would have yielded nothing here.
+    replay = []
+    with client.websocket_connect(f"/api/jobs/{job_id}/events") as ws:
+        while True:
+            ev = ws.receive_json()
+            replay.append(ev["type"])
+            if ev["type"] == "job_done":
+                break
+    assert "doc_start" in replay and "doc_done" in replay and replay[-1] == "job_done"
+
+
 def test_process_unknown_engine_rejected(client):
     cid = _create_class(client)
     files = [("files", ("lec1.pdf", _pdf_bytes(text=None), "application/pdf"))]

@@ -13,10 +13,50 @@ export default function ClassPage() {
   const [running, setRunning] = useState(false);
   const [prog, setProg] = useState<{ page: number; total: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const load = () => api.manifest(cid).then(setMan);
+
+  // Open the progress WS for a job and stream its log into state. The backend replays the job's
+  // event history on connect, so this works for both a fresh run and reconnecting to a job that's
+  // still running after we navigated away and came back.
+  const subscribe = (jobId: string) => {
+    wsRef.current?.close();
+    setLog([]);
+    setRunning(true);
+    const ws = new WebSocket(wsUrl(`/api/jobs/${jobId}/events`));
+    wsRef.current = ws;
+    ws.onmessage = (m) => {
+      const ev = JSON.parse(m.data);
+      if (ev.type === "doc_start")
+        setLog((s) => [...s, `▶ ${ev.title}  [${ev.engine}]  (${ev.index + 1}/${ev.total_docs})`]);
+      else if (ev.type === "page") {
+        setProg({ page: ev.page, total: ev.total });
+        setLog((s) => [...s, `    p${ev.page}/${ev.total}  ${ev.source}  ${ev.chars}c  ${Math.round(ev.elapsed_ms)}ms`]);
+      } else if (ev.type === "doc_done") setLog((s) => [...s, `✓ done — ${ev.pages} pages, ${ev.images} images`]);
+      else if (ev.type === "doc_skipped") setLog((s) => [...s, `↷ skipped ${ev.file} (${ev.reason})`]);
+      else if (ev.type === "error") setLog((s) => [...s, `✗ ${ev.message}`]);
+      else if (ev.type === "job_done") {
+        setRunning(false);
+        setProg(null);
+        load();
+      }
+    };
+    ws.onerror = () => setRunning(false);
+  };
+
   useEffect(() => {
     load();
+    // If a processing job for this class is already in flight (we left and came back), reconnect
+    // to its live log instead of showing an empty panel.
+    api.activity().then((a) => {
+      const job = a.processing.find((p) => p.class_id === cid);
+      if (job) subscribe(job.id);
+    });
+    return () => {
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
   }, [cid]);
 
   if (!man) return <p>Loading…</p>;
@@ -44,27 +84,8 @@ export default function ClassPage() {
 
   const run = async () => {
     await api.saveManifest(cid, man);
-    setLog([]);
-    setRunning(true);
     const { job_id } = await api.process(cid);
-    const ws = new WebSocket(wsUrl(`/api/jobs/${job_id}/events`));
-    ws.onmessage = (m) => {
-      const ev = JSON.parse(m.data);
-      if (ev.type === "doc_start")
-        setLog((s) => [...s, `▶ ${ev.title}  [${ev.engine}]  (${ev.index + 1}/${ev.total_docs})`]);
-      else if (ev.type === "page") {
-        setProg({ page: ev.page, total: ev.total });
-        setLog((s) => [...s, `    p${ev.page}/${ev.total}  ${ev.source}  ${ev.chars}c  ${Math.round(ev.elapsed_ms)}ms`]);
-      } else if (ev.type === "doc_done") setLog((s) => [...s, `✓ done — ${ev.pages} pages, ${ev.images} images`]);
-      else if (ev.type === "doc_skipped") setLog((s) => [...s, `↷ skipped ${ev.file} (${ev.reason})`]);
-      else if (ev.type === "error") setLog((s) => [...s, `✗ ${ev.message}`]);
-      else if (ev.type === "job_done") {
-        setRunning(false);
-        setProg(null);
-        load();
-      }
-    };
-    ws.onerror = () => setRunning(false);
+    subscribe(job_id);
   };
 
   const anyProcessed = man.documents.some((d) => d.status !== "pending");

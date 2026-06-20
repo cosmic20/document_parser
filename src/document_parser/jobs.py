@@ -1,13 +1,14 @@
 """Background processing jobs for the web app.
 
 Processing is model-heavy and memory-bound, so all jobs share a single worker thread (one job
-runs at a time across the whole app). Progress events from ``batch.run_folder`` are pushed onto a
-thread-safe queue that the progress WebSocket drains.
+runs at a time across the whole app). Progress events from ``batch.run_folder`` are appended to a
+per-job ``events`` history; the progress WebSocket replays that history on (re)connect and then
+streams new events, so a client that navigates away and comes back sees the full live log of an
+in-flight job (the job itself keeps running regardless of any connected socket).
 """
 
 from __future__ import annotations
 
-import queue
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -24,7 +25,10 @@ _jobs: dict[str, "Job"] = {}
 class Job:
     id: str
     class_id: str
-    queue: queue.Queue = field(default_factory=queue.Queue)
+    # Append-only event log (doc_start/page/doc_done/.../job_done). Readers track their own cursor,
+    # so it survives socket reconnects. CPython list append/index is GIL-atomic, which is all the
+    # single-producer (worker thread) / async-reader access here needs.
+    events: list[dict] = field(default_factory=list)
     status: str = "queued"  # queued | running | done | error
     error: str | None = None
 
@@ -53,16 +57,16 @@ def start_processing(
         job.status = "running"
         try:
             batch.run_folder(
-                class_dir, engine_override=engine, force=force, progress=job.queue.put
+                class_dir, engine_override=engine, force=force, progress=job.events.append
             )
         except Exception as e:  # surface to the UI rather than dying silently
             job.status = "error"
             job.error = str(e)
-            job.queue.put({"type": "error", "message": str(e)})
+            job.events.append({"type": "error", "message": str(e)})
         else:
             job.status = "done"
         finally:
-            job.queue.put({"type": "job_done", "status": job.status, "error": job.error})
+            job.events.append({"type": "job_done", "status": job.status, "error": job.error})
 
     _executor.submit(run)
     return job
