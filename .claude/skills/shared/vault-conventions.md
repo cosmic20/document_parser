@@ -47,9 +47,18 @@ Links express dependency and must stay **acyclic across topics**:
   **do not add the link — flag it** instead. Foundational notes are therefore never edited to link
   "up" to applied ones.
 
-### Link sparingly
+### Link sparingly, and inline only
 Only link when a concept is **meaningfully used**, not name-dropped. Good test: would a reader
 benefit from jumping there to understand the current material? If not, skip it.
+
+**Do not add a `## Related` / "See also" section.** Obsidian builds the graph from the `[[links]]`
+themselves, and a note's Backlinks panel is just those same links viewed from the other end — so a
+single inline link already creates both the graph edge and the backlink. A trailing list of bare
+`[[links]]` merely repeats concepts that should already be linked inline (or that surface as
+backlinks), adding maintenance cost with no navigational gain. Put every meaningful connection
+**inline in the prose**, where it carries context, and let backlinks + the graph + the topic MOC
+handle discovery. (This does not change the MOCs, which are curated indexes, not per-note link
+dumps.)
 
 ### Processing order does not matter
 Classes can be integrated in **any order** — there is no "foundational first" requirement:
@@ -97,10 +106,6 @@ $$
 
 > [!definition] Name
 > Precise definition.
-
-## Related
-- [[Other Concept In Same Topic]]
-- [[Foundational Concept Used Here]]
 ```
 
 Formatting rules:
