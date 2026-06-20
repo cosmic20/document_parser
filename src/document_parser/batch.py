@@ -345,4 +345,14 @@ def run_folder(
             "elapsed_ms": entries[doc.file].elapsed_ms, "status": "processed",
         })
 
+    # Keep the index in the manifest's (user-curated) order, so downstream consumers integrate in
+    # the chosen sequence. Covers the case where the manifest was reordered after the documents were
+    # already processed (every doc skipped above, so nothing re-saved it).
+    if entries:
+        rank = {d.file: i for i, d in enumerate(manifest.documents)}
+        ordered = dict(sorted(entries.items(), key=lambda kv: rank.get(kv[0], len(rank))))
+        if list(ordered) != list(entries):
+            entries = ordered
+            save_index(folder, manifest.course, entries)
+
     return entries

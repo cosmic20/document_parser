@@ -35,14 +35,23 @@ canonical notes and MOCs and corrupt dedup. (Document *processing* in Part A can
    `<vault>/.vault-index.json` (concepts, aliases, topics, `topic_edges`). This is your dedup +
    link-resolution + cycle-check map. Re-run it after each document (step 6).
 2. **Collect work**: read each class folder's `_parsed/batch_index.json`; take documents with
-   `status: processed` (skip `integrated`). **Within each class, process them in lecture order** —
-   lecture 1 first, then on through the last. Infer the sequence number from the document's `file`
-   stem / `title` (e.g. `lecture01`, `lec-1`, `L3`, `week05b`, `Lecture 12`, `04b`): parse the
-   leading lecture/week number plus any `a`/`b` part suffix and sort ascending; documents with no
-   parseable number keep their index order and sort last. This mirrors how the material was taught,
-   so foundational concepts are created before the applied ones that build on them — fewer dangling
-   links and cleaner first-pass merges. Correctness does **not** depend on this (see Notes /
-   "Order independence"), but it is the preferred order. Across *different* classes, order is free.
+   `status: processed` (skip `integrated`). **Within each class, integrate them in the curated
+   order** — lecture 1 first, then on through the last:
+   - **Order authority = the class's `batch.toml` manifest, if present.** Its `[[documents]]` order
+     is what the user arranged (e.g. by dragging rows in the web app), so iterate documents in that
+     exact order and use `batch_index.json` only to look up each one's `status`/`json_path` (join on
+     `file`). The web app keeps `batch_index.json` in this same order too, so a freshly written index
+     already reflects it.
+   - **No manifest? Infer from the names.** Parse a lecture/week number from each document's `file`
+     stem / `title` (e.g. `lecture01`, `lec-1`, `L3`, `week05b`, `Lecture 12`, `04b`) — leading
+     number plus any `a`/`b` part suffix — and sort ascending; documents with no parseable number
+     keep their index order and sort last.
+
+   Curated order is preferred over inference because the user may name lectures by content rather
+   than number. Either way this mirrors teaching order, so foundational concepts are created before
+   the applied ones that build on them — fewer dangling links and cleaner first-pass merges.
+   Correctness does **not** depend on the order (see Notes / "Order independence"); across
+   *different* classes the order is free.
 3. For each document:
    1. Load its `json_path`. Pick the input skill by `metadata.model`:
       `marker → vault-from-marker`, `got-ocr2 → vault-from-ocr`,

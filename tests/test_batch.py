@@ -163,3 +163,27 @@ def test_run_folder_without_manifest_derives_everything(tmp_path):
     assert e.title == "Gradient Descent"
     assert e.engine == "stub-ocr"
     assert e.status == "processed"
+
+
+def test_index_follows_manifest_order_after_reorder(tmp_path):
+    """Reordering the manifest reorders batch_index.json, even when every doc is already processed.
+
+    This is what lets the web app's drag-to-order drive vault-build's integration sequence.
+    """
+    cls = tmp_path / "Calculus"
+    cls.mkdir()
+    for name in ("alpha.pdf", "beta.pdf", "gamma.pdf"):
+        _make_pdf(cls / name, text=None)  # OCR path → stub engine
+    docs = [b.DocEntry(f, f, "stub-ocr") for f in ("alpha.pdf", "beta.pdf", "gamma.pdf")]
+    b.write_manifest(cls, b.BatchManifest(course="Calculus", default_engine="stub-ocr", documents=docs))
+
+    b.run_folder(cls)
+    first = list(b.load_index(cls))
+    assert first == ["alpha.pdf", "beta.pdf", "gamma.pdf"]
+
+    # Reorder the manifest (gamma first) and re-run: every doc is already processed → all skipped,
+    # but the persisted index must still pick up the new curated order.
+    reordered = [b.DocEntry(f, f, "stub-ocr") for f in ("gamma.pdf", "alpha.pdf", "beta.pdf")]
+    b.write_manifest(cls, b.BatchManifest(course="Calculus", default_engine="stub-ocr", documents=reordered))
+    b.run_folder(cls)
+    assert list(b.load_index(cls)) == ["gamma.pdf", "alpha.pdf", "beta.pdf"]

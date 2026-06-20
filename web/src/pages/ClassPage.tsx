@@ -24,6 +24,17 @@ export default function ClassPage() {
   const setDoc = (i: number, patch: Partial<ManifestDoc>) =>
     setMan({ ...man, documents: man.documents.map((d, j) => (j === i ? { ...d, ...patch } : d)) });
 
+  // Reorder a row; this order drives both processing and Vaultify, so persist it immediately.
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= man.documents.length) return;
+    const docs = man.documents.slice();
+    [docs[i], docs[j]] = [docs[j], docs[i]];
+    const next = { ...man, documents: docs };
+    setMan(next);
+    api.saveManifest(cid, next);
+  };
+
   const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.length) {
       await api.upload(cid, e.target.files);
@@ -69,9 +80,15 @@ export default function ClassPage() {
         </p>
       )}
 
+      <p className="muted">
+        Order = teaching order. Use ↑/↓ to arrange lectures top-to-bottom; both processing and
+        Vaultify follow this order, so you can name lectures by content instead of numbering them.
+      </p>
+
       <table className="grid">
         <thead>
           <tr>
+            <th>Order</th>
             <th>PDF</th>
             <th>Title</th>
             <th>Engine</th>
@@ -81,6 +98,19 @@ export default function ClassPage() {
         <tbody>
           {man.documents.map((d, i) => (
             <tr key={d.file}>
+              <td className="order-cell">
+                <button className="mini" disabled={i === 0} onClick={() => move(i, -1)} title="Move up">
+                  ↑
+                </button>
+                <button
+                  className="mini"
+                  disabled={i === man.documents.length - 1}
+                  onClick={() => move(i, 1)}
+                  title="Move down"
+                >
+                  ↓
+                </button>
+              </td>
               <td className="mono">{d.file}</td>
               <td>
                 <input value={d.title} onChange={(e) => setDoc(i, { title: e.target.value })} />
@@ -105,7 +135,7 @@ export default function ClassPage() {
           ))}
           {man.documents.length === 0 && (
             <tr>
-              <td colSpan={4} className="muted">
+              <td colSpan={5} className="muted">
                 No PDFs yet — upload some below.
               </td>
             </tr>
