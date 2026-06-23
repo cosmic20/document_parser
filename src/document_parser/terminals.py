@@ -38,6 +38,17 @@ def _read(fd: int) -> bytes:
         return b""
 
 
+def _pid_alive(pid: int) -> bool:
+    """True if the OS process still exists (signal 0 probes without delivering anything)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # exists but not ours to signal — still alive
+        return True
+    return True
+
+
 class TerminalManager:
     """Registry of live ``claude`` PTY sessions, keyed by class id."""
 
@@ -52,10 +63,19 @@ class TerminalManager:
         return [cid for cid, s in self._sessions.items() if s.alive]
 
     def ensure(self, class_id: str, cwd: Path, argv: list[str]) -> TermSession:
-        """Return the live session for a class, spawning ``claude`` if there isn't one."""
-        existing = self.get(class_id)
-        if existing:
+        """Return the live session for a class, spawning ``claude`` only if there truly isn't one.
+
+        At most ONE live ``claude`` per class: two concurrent vault-builds would edit the same
+        notes and corrupt them. We trust the OS, not just the ``alive`` flag — if a previous
+        session's process is still running (e.g. orphaned by an unclean detach, or a "stop" that
+        didn't fully take), we terminate it before spawning, so a relaunch can never run alongside
+        leftover work.
+        """
+        existing = self._sessions.get(class_id)
+        if existing and existing.alive and _pid_alive(existing.pid):
             return existing
+        if existing and _pid_alive(existing.pid):  # stale flag but process lingers — kill it first
+            self._terminate(existing)
         pid, fd = pty.fork()
         if pid == 0:  # child becomes claude
             os.chdir(str(cwd))
@@ -107,21 +127,32 @@ class TerminalManager:
         except OSError:
             pass
 
-    def stop(self, class_id: str) -> None:
-        s = self._sessions.get(class_id)
-        if s and s.alive:
+    def _terminate(self, s: TermSession) -> None:
+        """Mark a session dead now and SIGTERM its whole process group.
+
+        ``pty.fork`` makes the child a session leader, so its pgid == pid and the group holds
+        ``claude`` plus any tools it spawned — signalling the group stops the actual editing work,
+        not just the thin foreground client. Flipping ``alive`` synchronously means an immediate
+        relaunch spawns a fresh session instead of attaching to a corpse.
+        """
+        s.alive = False
+        try:
+            os.killpg(os.getpgid(s.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
             try:
                 os.kill(s.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
 
+    def stop(self, class_id: str) -> None:
+        s = self._sessions.get(class_id)
+        if s:
+            self._terminate(s)
+
     def shutdown(self) -> None:
         for s in self._sessions.values():
             if s.alive:
-                try:
-                    os.kill(s.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+                self._terminate(s)
 
 
 manager = TerminalManager()
